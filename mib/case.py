@@ -114,7 +114,18 @@ def _resolve(sheets: list[Sheet], case_id: str) -> tuple[dict, dict]:
     amended = {name for sheet in sheets for name in sheet.corrections}
     for name, found in candidates.items():
         found.sort(key=lambda item: item[0])
-        resolved[name] = found[0][2]
+        if name == "applicant_name":
+            # The only open-vocabulary field, so it is the only one a closed
+            # vocabulary cannot repair, and the only one where a single bad
+            # reading survives normalisation. Where several pages name the
+            # applicant, agreement between them beats the precedence order --
+            # two independent pages rarely invent the same misreading.
+            tally: dict[str, list] = {}
+            for rank, kind, value in found:
+                tally.setdefault(value, []).append(rank)
+            resolved[name] = min(tally, key=lambda v: (-len(tally[v]), min(tally[v])))
+        else:
+            resolved[name] = found[0][2]
         top = found[0][0]
         conflicts[name] = len({value for rank, _, value in found if rank == top}) - 1
         if not conflicts[name] and len({value for _, _, value in found}) > 1:
