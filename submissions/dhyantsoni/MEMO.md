@@ -1,6 +1,6 @@
 # MIB Intake Pipeline — Technical Memo
 
-Dhyan Soni · cross-validated: extraction 40.2/50, classification 64.6/80, calibration 15.5/20, **total 120.3/150**. In-sample the same pipeline reads 132.7 — see "Measuring honestly" below for why I quote the lower number.
+Dhyan Soni · cross-validated: extraction 41.1/50, classification 65.6/80, calibration 15.8/20, **total 122.5/150**, held-out adjudication accuracy 81.4%. In-sample the same pipeline reads ~134 — see "Measuring honestly" below for why I quote the lower number.
 
 ## What the packets actually are
 
@@ -100,6 +100,14 @@ different applicant than the intake form is not a packet with a noisy name field
 packet that should go to review, and the ledger is what preserves that distinction. Averaging
 or last-write-wins destroys exactly the signal the `NEEDS_REVIEW` class is made of.
 
+One field resolves by agreement rather than by rank. `applicant_name` is the only
+open-vocabulary field, so it is the only one the closed-vocabulary snapper cannot repair and
+the only one where a single bad reading survives normalisation intact. Precedence made that
+worse: measured head-to-head, the intake form *never* won a name disagreement against the
+registry extract or the biometric slip. Two independent pages rarely invent the same
+misreading, so where several pages name the applicant, agreement decides and precedence only
+breaks ties — worth 7.5 points of accuracy on that field.
+
 Case-id scoping runs through the same structure. Packets can contain pages for more than one
 applicant; each page's owner is read from the case id printed in its header, and pages owned by
 another case are excluded from resolution and counted as `foreign_pages`. Risk flags are taken
@@ -147,6 +155,22 @@ the readings are merged best-confidence-first — the same thing you'd do re-pho
 original at different contrasts and reading whichever line came out clean. Merging by
 confidence matters because downstream label matching sees the cleanest copy of each line first.
 
+Each cut is read under **two segmentation modes**, and that was the single largest extraction
+win available. `psm 6` assumes a uniform block and reads the intact forms well; `psm 11` treats
+the page as scattered text and is the only one that finds the lines on a slip whose layout the
+tearing destroyed. Neither dominates, so both run and the readings merge. Benchmarked over 185
+real scanned pages, scored on how many true field values each reader recovers: psm 6 alone
+1242, psm 6 + psm 11 merged 1373, a 10.5% gain for 2x the tesseract calls — which the runtime
+budget absorbs without noticing.
+
+What did *not* work is worth recording, because each was plausible enough to try. Rendering at
+300 DPI is **worse** than 220: the embedded scans are 144 DPI, so the extra resolution
+interpolates noise rather than revealing detail. Morphological removal of the long horizontal
+streaks is worse still — the same operation that deletes a press artefact deletes the stem of
+a letter, and page classification fell from 110 to 96. Cropping to the ink bounding box,
+upscaling 1.5x, and re-reading each label's value strip at 3x magnification under `psm 7` all
+came in within noise (the last at +0.5%, which did not justify the machinery).
+
 Cost is controlled three ways. An `accept()` predicate stops the ladder the moment a reading
 classifies as a known template carrying two or more labels, so most pages cost one call, not
 three. Quarter-turn retries are attempted only when some cut produced legible ink at all — a
@@ -186,7 +210,11 @@ verdict as an input, does better out of fold on every measure. That single chang
 +2.7 points and 4 points of held-out accuracy, and it came from fixing the measurement
 rather than from any new idea about documents.
 
-`tools/honest_eval.py` is now the only thing I quote scores from.
+`tools/honest_eval.py` is now the only thing I quote scores from, and every number below
+came out of it. Correcting the measurement was worth more than any single idea that
+followed, because it redirected the work: once the loss was attributed honestly, 9.4 of the
+9.8 extraction points turned out to sit on scanned pages, which is where the remaining
+effort went.
 
 ## The decision layer: constraints, a residual model, expected utility
 
@@ -245,6 +273,25 @@ it is a *mistake I am choosing*, deliberately, because the scorer priced it at z
 the other one at −4. `NEEDS_REVIEW` is the hedge with the same arithmetic: it can never score
 below 2, so it wins whenever the review mass is large enough, and loses to `DENIED` once
 P(DENIED) clears 0.25.
+
+## Where the remaining loss is, and why it is not the decision rule
+
+The honest evaluation says 35 catastrophic false approvals remain, and it is worth being
+precise about what they are. They are not the decision rule misfiring: class weighting,
+regularisation sweeps, and reweighting the constraint blend all leave the number where it is,
+because expected-utility selection is *already* optimal given the probabilities it is handed.
+Each false approval trades against roughly six true approvals that would have to be routed to
+review to prevent it, and the payoff matrix prices that trade as a loss.
+
+They are a shortage of information. 81% of the packets that are truly denied yet escape every
+rule have no readable biometric slip — the page that would have named the disqualifying flag
+is a scan too damaged to read. The fix for those is not a better classifier, it is a better
+reader, which is why the last round of work went into OCR rather than into the model.
+
+The same shape governs `risk_flags`. Where a slip is legible the flags are recovered with 99.1%
+accuracy; where it is not, 55.8%. There is no clever prior to be had in the gap: a packet whose
+slip is unreadable carries `illegible_biometrics` only 34% of the time, so asserting it would
+be wrong twice as often as right, and `none` remains the better guess.
 
 ## Why no case is ever omitted
 
