@@ -1,6 +1,6 @@
 # MIB Intake Pipeline — Technical Memo
 
-Dhyan Soni · training-set score: classification 76.7/80, extraction 40.2/50, calibration 15.8/20, total 132.7/150 (952/1000 correct adjudications, 2 false approvals)
+Dhyan Soni · cross-validated: extraction 40.2/50, classification 64.6/80, calibration 15.5/20, **total 120.3/150**. In-sample the same pipeline reads 132.7 — see "Measuring honestly" below for why I quote the lower number.
 
 ## What the packets actually are
 
@@ -160,6 +160,33 @@ throughput 14x in measurement, and the second half of the same problem is that t
 quietly spawning threads it was told not to. Past 85% of the total budget,
 workers drop to text-layer-only, and results are appended and flushed per case so a container
 stopped at the wall is still scored on everything it had decided.
+
+## Measuring honestly
+
+The first number I got for this pipeline was 132.7/150, and it was wrong — not
+miscomputed, but measured on the packets the model had been fitted on. Cross-validating
+the fitted parts drops it to 120.3. Two gaps opened up, and the second one is the one that
+mattered:
+
+| | in-sample | cross-validated |
+|---|---:|---:|
+| adjudication accuracy | 95.2% | 79.6% |
+| catastrophic false approvals | 2 | 36 |
+
+A 15-point accuracy gap is embarrassing; an 18x gap in the single failure mode the scorer
+prices at −4 is disqualifying. Had I shipped on the in-sample number I would have believed
+the system had essentially solved false approvals when it had not.
+
+What the honest measurement then told me was that the problem was overfitting rather than
+difficulty. The rule cascade has no sample dependence — it scores the same in or out of
+sample — and it already decides most packets. What it leaves is a small residue that is
+mostly about whether the evidence was legible at all. A boosted tree over 53 features fits
+that residue and memorises it; a strongly regularised linear model, handed the cascade's own
+verdict as an input, does better out of fold on every measure. That single change was worth
++2.7 points and 4 points of held-out accuracy, and it came from fixing the measurement
+rather than from any new idea about documents.
+
+`tools/honest_eval.py` is now the only thing I quote scores from.
 
 ## The decision layer: constraints, a residual model, expected utility
 
