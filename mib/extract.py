@@ -10,6 +10,7 @@ where it was printed in visible ink.
 from __future__ import annotations
 
 import re
+from datetime import date
 from difflib import SequenceMatcher
 from functools import lru_cache
 
@@ -317,9 +318,12 @@ def normalize(field: str, value: str) -> str | None:
         if not match:
             return None
         year, month, day = (int(part) for part in match.groups())
-        if not (1 <= month <= 12 and 1 <= day <= 31):
+        try:
+            # A day-of-month check is not enough: OCR readily turns a real date
+            # into 2026-02-30, which the submission schema rejects outright.
+            return date(year, month, day).isoformat()
+        except ValueError:
             return None
-        return f"{year:04d}-{month:02d}-{day:02d}"
     if field == "applicant_name":
         if DAMAGE.search(value):
             return None
