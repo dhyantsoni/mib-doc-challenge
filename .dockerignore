@@ -15,3 +15,4 @@ data/validation/
 submissions/
 *.zip
 *.zip.sha256
+work/

@@ -69,19 +69,45 @@ def _init(deadline: float) -> None:
     _deadline = deadline
 
 
+def _already_done(output: Path) -> set[str]:
+    """Case ids already written, after discarding any half-written last line.
+
+    A run that was interrupted -- by the scoring runtime limit, or by the machine
+    going away -- leaves a valid prefix behind. Re-reading it means a restart
+    costs only the cases that had not been decided yet.
+    """
+    if not output.exists():
+        return set()
+
+    done, intact = set(), []
+    for line in output.read_text().splitlines():
+        try:
+            case_id = json.loads(line)["case_id"]
+        except (ValueError, KeyError, TypeError):
+            continue  # truncated tail from an interrupted write
+        done.add(case_id)
+        intact.append(line)
+
+    output.write_text("".join(line + "\n" for line in intact))
+    return done
+
+
 def main(input_dir: str, output_path: str) -> None:
     pdfs = sorted(str(p) for p in Path(input_dir).glob("*.pdf"))
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    workers = _cpu_quota()
-    deadline = time.time() + 0.85 * BUDGET_SECONDS_PER_PDF * max(1, len(pdfs))
+    done = _already_done(output)
+    remaining = [p for p in pdfs if Path(p).stem not in done]
+    if not remaining:
+        return
 
-    with open(output, "w") as handle:
-        if not pdfs:
-            return
+    workers = _cpu_quota()
+    deadline = time.time() + 0.85 * BUDGET_SECONDS_PER_PDF * max(1, len(remaining))
+
+    with open(output, "a") as handle:
         with mp.Pool(workers, initializer=_init, initargs=(deadline,)) as pool:
-            for prediction in pool.imap_unordered(_predict, pdfs, chunksize=1):
+            for prediction in pool.imap_unordered(_predict, remaining, chunksize=1):
                 handle.write(json.dumps(prediction, sort_keys=True) + "\n")
                 handle.flush()
 
