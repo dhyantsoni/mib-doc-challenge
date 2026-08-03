@@ -25,7 +25,7 @@ cv2.setNumThreads(1)
 
 OCR_DPI = 220
 _CONFIG = "--oem 1 --psm 6 -c tessedit_do_invert=0"
-_CUTS = (150, 180, 210, 120)
+_CUTS = (150, 180, 210)
 _TURNS = (cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_CLOCKWISE)
 _DEAD_CONF = 0.34
 

@@ -153,8 +153,11 @@ three. Quarter-turn retries are attempted only when some cut produced legible in
 destroyed page is abandoned rather than ground through the full ladder. And a per-packet
 `Budget` of `4 + 2 × (text-poor pages)` calls caps the blast radius so one ruined page cannot
 eat another packet's share of the 6-seconds-per-PDF budget. Worker count comes from
-`/sys/fs/cgroup/cpu.max`, not `os.cpu_count()`, which reports the host's cores under `--cpus 4`
-and would oversubscribe tesseract by an order of magnitude. Past 85% of the total budget,
+`/sys/fs/cgroup/cpu.max`, not `os.cpu_count()`, which reports the host's cores under `--cpus 4`.
+That distinction is worth an order of magnitude, not a few percent: oversubscribing collapsed
+throughput 14x in measurement, and the second half of the same problem is that tesseract honours
+`OMP_THREAD_LIMIT` rather than `OMP_NUM_THREADS`, so setting only the latter leaves every worker
+quietly spawning threads it was told not to. Past 85% of the total budget,
 workers drop to text-layer-only, and results are appended and flushed per case so a container
 stopped at the wall is still scored on everything it had decided.
 

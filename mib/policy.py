@@ -160,6 +160,11 @@ def _rule_probabilities(record: dict, features: dict) -> dict[str, float]:
 
 
 def _load():
+    """Load the model artifact that ships inside the image.
+
+    This is our own build output, baked in at image build time by tools/train.py
+    and never read from the input mount, so it is not an untrusted deserialise.
+    """
     global _model
     if _model is None and os.path.exists(MODEL_PATH):
         import joblib

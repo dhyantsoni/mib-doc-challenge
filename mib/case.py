@@ -266,7 +266,7 @@ def read_packet(path: str, allow_ocr: bool = True) -> dict:
         case_id = ""
 
     pages = pagelib.load(path)
-    budget = ocr.Budget(6 + 4 * sum(1 for p in pages if len(p.visible_spans) < _MIN_VISIBLE_SPANS))
+    budget = ocr.Budget(4 + 2 * sum(1 for p in pages if len(p.visible_spans) < _MIN_VISIBLE_SPANS))
     sheets = [_sheet(path, page, index, allow_ocr, budget) for index, page in enumerate(pages)]
 
     resolved, conflicts = _resolve(sheets, case_id)
