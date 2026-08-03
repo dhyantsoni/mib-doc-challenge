@@ -143,7 +143,7 @@ def _named_by(sheets: list[Sheet], case_id: str) -> dict[str, str]:
     return names
 
 
-def _risk_flags(sheets: list[Sheet], resolved: dict, conflicts: dict, case_id: str) -> tuple[str, bool]:
+def _risk_flags(sheets: list[Sheet], case_id: str) -> tuple[str, bool]:
     observed = None
     for sheet in sorted(sheets, key=lambda s: extract.PRECEDENCE.get(s.kind, 9)):
         if sheet.owner and sheet.owner != case_id:
@@ -266,12 +266,12 @@ def read_packet(path: str, allow_ocr: bool = True) -> dict:
         case_id = ""
 
     pages = pagelib.load(path)
-    budget = ocr.Budget(4 + 2 * sum(1 for p in pages if len(p.visible_spans) < _MIN_VISIBLE_SPANS))
+    budget = ocr.Budget(6 + 4 * sum(1 for p in pages if len(p.visible_spans) < _MIN_VISIBLE_SPANS))
     sheets = [_sheet(path, page, index, allow_ocr, budget) for index, page in enumerate(pages)]
 
     resolved, conflicts = _resolve(sheets, case_id)
     resolved.setdefault("case_id", case_id)
-    flags, saw_slip = _risk_flags(sheets, resolved, conflicts, case_id)
+    flags, saw_slip = _risk_flags(sheets, case_id)
     fee, fee_seen = _fee_status(resolved)
 
     record = {

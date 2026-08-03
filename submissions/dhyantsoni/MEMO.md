@@ -1,6 +1,6 @@
 # MIB Intake Pipeline — Technical Memo
 
-Dhyan Soni · scores: classification TBD/80, extraction TBD/50, calibration TBD/20, total TBD/150
+Dhyan Soni · training-set score: classification 76.7/80, extraction 40.2/50, calibration 15.8/20, total 132.7/150 (952/1000 correct adjudications, 2 false approvals)
 
 ## What the packets actually are
 
