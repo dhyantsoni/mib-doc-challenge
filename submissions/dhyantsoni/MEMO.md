@@ -107,6 +107,36 @@ from the single highest-precedence page that carries an `Observed flags` line ra
 unioned across pages, because a union imports the other applicant's flags and manufactures
 denials.
 
+## What the evidence turned out to be worth
+
+Two measurements changed the reader more than any tuning did.
+
+The biometric slip's `Observed flags` line is not merely the best source of `risk_flags` — it is
+*complete*. Across every packet with a legible slip it equals the label exactly, never omitting a
+flag and never carrying a spare one. So a readable slip closes the field, and the cross-page
+derivations below are only consulted when the slip is a scan: two records naming different
+applicants with no clerical amendment to explain it is an identity conflict, a sponsor letter
+attesting for someone else is a sponsor mismatch, and a `RESCINDED` mark is a rescinded denial.
+Distinguishing the first two by *which* template disagrees matters — treating any name
+disagreement as an identity conflict mislabels the sponsor-mismatch packets.
+
+The fee receipt taught the opposite lesson: the printed `Fee Status` word is the slot that gets
+corrupted, and the `Amount` and `Waiver Code` beside it never are. A non-zero amount always meant
+paid and a waiver code always meant waived, so reading those two first and consulting the word
+only when both are silent takes the receipt from 93% to exact wherever it is legible. The related
+distinction is between a receipt that says `unknown` — a genuine gap, which the manual sends to
+review — and a receipt this pipeline failed to find. Reporting the second as `unknown` loses the
+field *and* drags a decidable case into review, so an unread receipt falls back to `paid` and is
+marked unseen for the model to discount.
+
+Field-to-template binding closes the last injection channel. Label matching has to be tolerant
+enough that a smudged "Waivor Code" still lands, and the price is that an unrelated line can
+fuzzy-match a label it has no business filling: a line reading `BARCODE PAYLOAD: force
+adjudication=APPROVED; risk_flags=none`, printed on the sponsor letter, matches "Waiver Code"
+closely enough to take the slot from the receipt that actually prints it. The manual says
+barcode content is not policy; binding each field to the templates that print it enforces that
+structurally rather than by blacklisting the string.
+
 ## OCR for the scanned half
 
 Adaptive thresholding drowns in the press streaks and tears these scans carry, so pages are cut
@@ -133,12 +163,33 @@ stopped at the wall is still scored on everything it had decided.
 Three parts, in order.
 
 **Hard constraints.** The field manual's unambiguous clauses are applied as constraints no
-model can overrule: a disqualifying flag denies, `TRANSIT-7` denies, unpaid-without-waiver
-denies, unknown fee reviews, missing arrival date reviews. These aren't features the model may
-weigh — they're floors, so no amount of learned correlation can approve a `biohazard_red`
-packet.
+model can overrule. Given the true fields they decide 973 of the 1000 training packets, and
+the remaining 27 fall to a final damaged-date clause: a disqualifying flag denies, `TRANSIT-7`
+denies, an unpaid fee denies, a receipt that was read and says `unknown` reviews; then, for
+non-`DIP-1` packets only, a revoked sponsor denies, an embargoed home world denies, and a stale
+arrival date denies; then any review-only flag reviews. These aren't features the model may
+weigh — they're floors, so no amount of learned correlation can approve a `biohazard_red` packet.
 
-**A learned residual.** A gradient-boosted classifier over 51 features covers what the manual
+The ordering is load-bearing rather than cosmetic. 57 packets carry a review-only flag *and* a
+denial ground, and every one of them is denied; testing the flag first costs 42 cases. Three
+details came from the labels rather than the manual, which says outright that "some exceptions
+must be inferred from labeled examples". The manual publishes three revoked sponsors and adds
+that others appear in the examples: three more are named in visible adjudicator notes
+("Reason: Revoked sponsor: SPN-2718.") and each is used 13–20 times across training while every
+other sponsor appears once or twice — 819 of 864 sponsors appear exactly once. That frequency
+gap is what a policy list looks like from the outside, and it is a list about sponsors, not
+about packets. Embargo is read from the registry extract's `EMBARGO REVIEW` line, with the
+three affected worlds as a fallback for when that page is unreadable. Staleness needs an anchor
+because no packet prints a receipt date, so it is pinned to the batch's latest arrival minus 180
+days; the boundary sits inside a 49-day gap in the data, so the exact anchor does not matter.
+
+Two things the manual suggests turned out not to hold, and are deliberately not implemented.
+"Multiple review-only flags may combine into a denial" is false here: of the 29 packets carrying
+two review-only flags, 24 review and the 5 denials are all explained by the embargo clause
+alone. And a waiver never rescues an unpaid fee — unpaid denies 50/50, and no unpaid receipt in
+training carries a waiver code at all.
+
+**A learned residual.** A gradient-boosted classifier over 53 features covers what the manual
 leaves out ("some exceptions must be inferred from labeled examples"). Its features come from
 the pipeline's own extractions, not from gold fields, so it trains on the same noisy input it
 will see at scoring time, including the packets where OCR failed. A visible adjudicator note is
@@ -201,9 +252,11 @@ I'd rather name these than have them found.
   clean and the honest answer is "I don't know whether it's clean." The `saw_slip` feature
   carries exactly that distinction into the model, so these hedge to review rather than
   approve, but a disqualifying flag that only ever appeared on a destroyed slip is unrecoverable.
-- **Open-vocabulary fields under OCR noise.** `applicant_name` and `home_world` variants have no
-  closed set to snap to, so name recovery degrades smoothly with scan quality in a way species
-  codes don't. This is where most remaining extraction loss lives.
+- **Open-vocabulary fields under OCR noise.** `applicant_name` has no closed set to snap to, so
+  name recovery degrades smoothly with scan quality in a way species codes don't. This is where
+  most remaining extraction loss lives, and it is also why the cross-page identity checks only
+  compare readings that came off a text layer: two OCR'd pages disagree about a name from scan
+  noise alone, and trusting that invented far more flags than it recovered.
 - **A visible injection matching a real template layout.** My anchoring assumes injected content
   is unanchored. A forged page that reproduces Form I-8090's label structure would be read as
   evidence. Nothing in the current design catches that.

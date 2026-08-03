@@ -25,7 +25,24 @@ PAGE_TYPES = {
 }
 
 # Precedence from FIELD_MANUAL.md "Trusted Evidence"; lower sorts first.
-PRECEDENCE = {"note": 1, "intake": 2, "biometric": 3, "sponsor": 4, "registry": 5, "unknown": 9}
+PRECEDENCE = {"note": 1, "intake": 2, "biometric": 3, "sponsor": 4, "registry": 5, "fee": 6, "unknown": 9}
+
+# Which templates are allowed to supply which field. Label matching has to be
+# tolerant enough that a smudged "Waivor Code" still lands, and the price of that
+# tolerance is that an unrelated line can fuzzy-match a label it has no business
+# filling: a barcode payload printed on the sponsor letter matches "Waiver Code"
+# closely enough to win the slot from the receipt that actually prints it. The
+# manual is explicit that barcode content is not policy, and binding each field
+# to its own templates enforces that structurally. Pages that failed to classify
+# are still allowed through, since that is where OCR recall lives.
+FIELD_SOURCES = {
+    "fee_status": {"fee", "intake"},
+    "waiver_code": {"fee"},
+    "amount": {"fee"},
+    "observed_flags": {"biometric"},
+    "biometric_confidence": {"biometric"},
+    "registry_status": {"registry"},
+}
 
 # Longest first so "Species Code" wins over a bare "Species".
 LABELS = (
@@ -68,7 +85,31 @@ SPONSOR_PROSE = re.compile(r"sponsor\s+SPN[-\s]?(\d{4})\s+attests that\s+(.+?)\s
 CLASS_PROSE = re.compile(r"class\s+([A-Z]{2,8}[-\s]?\d)\s+compliance", re.I)
 PURPOSE_PROSE = re.compile(r"expected on Earth for\s+(.+?)\s*\.", re.I | re.S)
 
-STAMP_WORDS = ("APPROVED", "DENIED", "REVIEW", "SAMPLE DENIAL", "RESCINDED", "VOID")
+# A signed clerical amendment on the intake form, e.g.
+#   "Manual correction: sponsor is SPN-6544."
+# The field manual ranks a signed manual note above every printed field, and the
+# printed value it supersedes is always the stale one.
+CORRECTION = re.compile(
+    r"manual\s+correction[:\s]+(applicant|sponsor|visa\s*class|fee\s*status)\s+is\s+(.+?)\s*\.?\s*$",
+    re.I,
+)
+CORRECTION_FIELDS = {
+    "applicant": "applicant_name",
+    "sponsor": "sponsor_id",
+    "visaclass": "visa_class",
+    "feestatus": "fee_status",
+}
+
+# Damage markers stand where a value was cut, washed or torn away. They are not
+# values, and one of them -- "[NAME CUT OUT]" -- would otherwise survive
+# normalisation as the plausible name "Name Cut Out" and block the real name on
+# a lower-precedence page.
+DAMAGE = re.compile(r"cut out|washed out|whiteout|white out|torn|obscured|unreadable|redacted|lost|missing", re.I)
+
+# RESCINDED is the only evidence for rescinded_denial when the biometric slip is
+# a scan, and every packet carrying it is labelled with that flag. VOID never
+# appears in the corpus.
+STAMP_WORDS = ("APPROVED", "DENIED", "REVIEW", "SAMPLE DENIAL", "RESCINDED")
 
 _ALNUM = re.compile(r"[^a-z0-9]+")
 
@@ -183,6 +224,7 @@ def parse(lines: list[str], page_type: str) -> dict:
     actually names the sponsor is reached.
     """
     best: dict[str, tuple[int, float, str]] = {}
+    corrections: dict[str, str] = {}
     stamps: list[str] = []
     finding = None
 
@@ -203,6 +245,14 @@ def parse(lines: list[str], page_type: str) -> dict:
             if word in upper and len(line) <= 64:
                 stamps.append(word)
 
+        amended = CORRECTION.search(line)
+        if amended:
+            field = CORRECTION_FIELDS[_key(amended.group(1))]
+            value = normalize(field, amended.group(2))
+            if value:
+                corrections[field] = value
+            continue
+
         labelled = _label_at(line)
         if labelled:
             offer(labelled[0], labelled[1], labelled[2])
@@ -221,7 +271,12 @@ def parse(lines: list[str], page_type: str) -> dict:
         if klass:
             offer("visa_class", klass.group(1), 1.0)
 
-    return {"fields": {name: value for name, (_, _, value) in best.items()}, "stamps": stamps, "finding": finding}
+    return {
+        "fields": {name: value for name, (_, _, value) in best.items()},
+        "corrections": corrections,
+        "stamps": stamps,
+        "finding": finding,
+    }
 
 
 def owner_case_id(lines: list[str], fields: dict) -> str | None:
@@ -266,6 +321,8 @@ def normalize(field: str, value: str) -> str | None:
             return None
         return f"{year:04d}-{month:02d}-{day:02d}"
     if field == "applicant_name":
+        if DAMAGE.search(value):
+            return None
         cleaned = re.sub(r"[^A-Za-z'\- ]+", " ", value).strip()
         cleaned = " ".join(part for part in cleaned.split() if len(part) > 1)
         return cleaned.title() if 3 <= len(cleaned) <= 48 else None
