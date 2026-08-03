@@ -95,7 +95,13 @@ def vectorize(record: dict, features: dict) -> list[float]:
         }
     )
     row.update({f"flag_{name}": name in flags for name in vocab.RISK_FLAGS})
-    return [float(row[name]) for name in FEATURE_ORDER]
+    # The cascade's own verdict is the single most informative input the model
+    # has: its job is not to re-derive policy but to judge whether the evidence
+    # the cascade read was complete enough to believe.
+    verdict = constrain(record, features) or "NONE"
+    return [float(row[name]) for name in FEATURE_ORDER] + [
+        float(verdict == name) for name in ("APPROVED", "DENIED", "NEEDS_REVIEW", "NONE")
+    ]
 
 
 def constrain(record: dict, features: dict) -> str | None:
@@ -189,8 +195,8 @@ def probabilities(record: dict, features: dict) -> dict[str, float]:
     return {name: float(score) for name, score in zip(model["classifier"].classes_, scores)}
 
 
-def decide(record: dict, features: dict) -> tuple[str, float]:
-    probability = probabilities(record, features)
+def act(record: dict, features: dict, probability: dict) -> tuple[str, float]:
+    """Apply the constraints, then take the action with the best expected score."""
     forced = constrain(record, features)
     if forced:
         probability = {
@@ -205,9 +211,12 @@ def decide(record: dict, features: dict) -> tuple[str, float]:
         vocab.ADJUDICATIONS,
         key=lambda choice: sum(vocab.PAYOFF[choice][truth] * probability[truth] for truth in vocab.ADJUDICATIONS),
     )
+    return action, probability[action]
 
+
+def decide(record: dict, features: dict) -> tuple[str, float]:
+    action, confidence = act(record, features, probabilities(record, features))
     model = _load()
-    confidence = probability[action]
     if model is not None and model.get("calibrator") is not None:
         confidence = float(model["calibrator"].predict([confidence])[0])
     return action, round(min(0.99, max(0.01, confidence)), 4)
